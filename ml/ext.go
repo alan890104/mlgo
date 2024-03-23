@@ -48,8 +48,20 @@ func (f *ModuleImpl) Relu(ctx *Context) Layer {
 }
 
 // Conv1D implements ModelLoader.
-func (f *ModuleImpl) Conv1D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer {
-	panic("unimplemented")
+func (f *ModuleImpl) Conv1D(ctx *Context, input_size uint32,  kernel_size uint32, stride uint32, padding uint32) Layer {
+	return func(input *Tensor) *Tensor {
+		w := NewTensor2D(nil, TYPE_F32, kernel_size, input_size)
+		for i := 0; i < len(w.Data); i++ {
+			w.Data[i] = readFP32(f.fp)
+		}
+
+		b := NewTensor1D(nil, TYPE_F32, input_size)
+		for i := 0; i < len(b.Data); i++ {
+			b.Data[i] = readFP32(f.fp)
+		}
+
+		return Add(ctx, Conv1D(ctx, input, w, b, stride, padding), b)
+	}
 }
 
 // Conv2D implements ModelLoader.
