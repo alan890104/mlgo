@@ -18,3 +18,5 @@ ml_mips/ml_mips.bin
 
 examples/llama/data
 examples/llama/models
+
+dist/

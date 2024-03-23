@@ -1,0 +1,55 @@
+package main
+
+import (
+	"fmt"
+	"mlgo/ml"
+	"os"
+)
+
+func modelEval(fname string, threadCount int, inputData []float32) *ml.Tensor {
+	file, err := os.Open(fname)
+	if err != nil {
+		fmt.Println(err)
+		os.Exit(1)
+	}
+	defer file.Close()
+
+	ctx0 := &ml.Context{}
+	graph := ml.Graph{ThreadsCount: threadCount}
+
+	module := ml.NewModuleImpl(file)
+
+	{%- for node in nodes %}
+	{{node.code_str}}
+	{%- endfor %}
+
+	{% if n_input == 1 -%}
+	{{input_name}} := ml.NewTensor1D(nil, ml.TYPE_F32, uint32({{inputs[0]}}))
+	{%- elif n_input == 2 -%}
+	{{input_name}} := ml.NewTensor2D(nil, ml.TYPE_F32, uint32({{inputs[0]}}), uint32({{inputs[1]}}))
+	{%- endif %}
+	copy({{input_name}}.Data, inputData)
+
+	// pass forward
+	{% for node in nodes %}
+	{{node.output_name}} := {{node.name}}({{node.input_name}})
+	{%- endfor %}
+
+
+	// Run the computation
+	ml.BuildForwardExpand(&graph, output)
+	ml.GraphCompute(ctx0, &graph)
+
+	return output
+}
+
+func main() {
+	modelWeightsFname := "{{ model_weights_fname }}"
+	{% if n_input == 1 -%}
+	inputData := make([]float32, {{ inputs[0] }})
+	{%- elif n_input == 2 -%}
+	inputData := make([]float32, {{ inputs[0] }}*{{ inputs[1] }})
+	{%- endif %}
+	outputTensor := modelEval(modelWeightsFname, 1, inputData)
+	ml.PrintTensor(outputTensor, "final tensor")
+}

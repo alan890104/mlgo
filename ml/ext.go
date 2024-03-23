@@ -16,7 +16,7 @@ const (
 )
 
 type Module interface {
-	GeMM(ctx *Context, inputSize uint32, outputSize uint32) Layer
+	Gemm(ctx *Context, inputSize uint32, outputSize uint32) Layer
 	Relu(ctx *Context) Layer
 	Conv1D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
 	Conv2D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
@@ -28,8 +28,8 @@ type ModuleImpl struct {
 
 func NewModuleImpl(fp *os.File) Module {
 	magic := readInt(fp)
-	// 0x6d6c676f is mlgo in hex
-	if magic != 0x6d6c676f {
+	// 0x6F7261 is mlgo in hex
+	if magic != 0x6F7261 {
 		log.Fatal("invalid model file (bad magic)")
 	}
 	return &ModuleImpl{fp: fp}
@@ -69,8 +69,8 @@ func (f *ModuleImpl) Conv2D(ctx *Context, input_size uint32, output_size uint32,
 	panic("unimplemented")
 }
 
-// GeMM implements ModelLoader.
-func (f *ModuleImpl) GeMM(ctx *Context, input_size uint32, output_size uint32) Layer {
+// Gemm implements ModelLoader.
+func (f *ModuleImpl) Gemm(ctx *Context, input_size uint32, output_size uint32) Layer {
 	w := NewTensor2D(nil, TYPE_F32, input_size, output_size)
 	for i := 0; i < len(w.Data); i++ {
 		w.Data[i] = readFP32(f.fp)
