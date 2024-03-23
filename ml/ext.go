@@ -1,6 +1,7 @@
 package ml
 
 import (
+	"log"
 	"os"
 )
 
@@ -26,6 +27,11 @@ type ModuleImpl struct {
 }
 
 func NewModuleImpl(fp *os.File) Module {
+	magic := readInt(fp)
+	// 0x6d6c676f is mlgo in hex
+	if magic != 0x6d6c676f {
+		log.Fatal("invalid model file (bad magic)")
+	}
 	return &ModuleImpl{fp: fp}
 }
 
