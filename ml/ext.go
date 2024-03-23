@@ -28,8 +28,8 @@ type ModuleImpl struct {
 
 func NewModuleImpl(fp *os.File) Module {
 	magic := readInt(fp)
-	// 0x6d6c676f is mlgo in hex
-	if magic != 0x6d6c676f {
+	// 0x6F7261 is mlgo in hex
+	if magic != 0x6F7261 {
 		log.Fatal("invalid model file (bad magic)")
 	}
 	return &ModuleImpl{fp: fp}

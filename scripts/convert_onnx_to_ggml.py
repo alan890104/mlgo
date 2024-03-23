@@ -8,15 +8,15 @@ def convert_onnx_to_ggml(onnx_file_path, output_ggml_path):
     pack_fmt = "i" if not IS_BIGENDIAN else "!i"
 
     # create model weight file
-    fout = open(output_ggml_path, "wb")
-    fout.write(struct.pack(pack_fmt, 0x67676D6C))  # magic: 'ggml' in hex
-
     onnx_model_with_shape = onnx.shape_inference.infer_shapes(onnx.load(onnx_file_path))
-    for initializer in onnx_model_with_shape.graph.initializer:
-        weight = onnx.numpy_helper.to_array(initializer)
-        weight.astype(">f4").tofile(fout)
 
-    fout.close()
+    # create model weight file
+    with open(output_ggml_path, "wb") as file:
+        file.write(struct.pack("i", 0x6F7261))
+        for initializer in onnx_model_with_shape.graph.initializer:
+            weight = onnx.numpy_helper.to_array(initializer)
+            weight.astype(">f4")
+            weight.tofile(file)
     print(f"Done. Output file: {output_ggml_path}")
 
 
