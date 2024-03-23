@@ -459,7 +459,7 @@ func ReluImpl(ctx *Context, a *Tensor, inplace bool) *Tensor {
 
 	result.op = OP_RELU
 	result.Src0 = a
-	result.Src1 = nil 
+	result.Src1 = nil
 
 	if isNode {
 		result.grad = DupTensor(ctx, result)
@@ -476,6 +476,60 @@ func Relu(ctx *Context, a *Tensor) *Tensor {
 
 func ReluInplace(ctx *Context, a *Tensor) *Tensor {
 	return ReluImpl(ctx, a, true)
+}
+
+func Conv1DImpl(ctx *Context, a, b *Tensor, stride, padding uint32, inplace bool) *Tensor {
+	if a.Dims != 2 || b.Dims != 3 {
+		fmt.Printf("\n[STOP] Conv1DImpl - invalid tensor dimensions!")
+		os.Exit(1)
+	}
+
+	// Calculate output length after applying stride and padding
+	inputLength := a.NE[1]  // Assuming second dimension is length
+	kernelLength := b.NE[2] // Assuming third dimension is kernel length
+	outputLength := (inputLength+2*padding-kernelLength)/stride + 1
+
+	// Assuming the first dimension is channels
+	inputChannels := a.NE[0]
+	outputChannels := b.NE[0]
+
+	// Verify channels compatibility
+	if inputChannels != b.NE[1] {
+		fmt.Printf("\n[STOP] Conv1DImpl - input and kernel channel mismatch!")
+		os.Exit(1)
+	}
+
+	// Prepare the output tensor
+	output := NewTensor2D(ctx, a.Type, outputChannels, outputLength)
+
+	// Apply padding
+	// Note: Padding logic is simplified and needs proper implementation
+	paddedInputLength := inputLength + 2*padding
+	paddedInput := make([]float32, inputChannels*paddedInputLength)
+	for c := uint32(0); c < inputChannels; c++ {
+		copy(paddedInput[c*paddedInputLength+padding:], a.Data[c*inputLength:(c+1)*inputLength])
+	}
+
+	// Perform the convolution operation
+	for oc := uint32(0); oc < outputChannels; oc++ {
+		for i := uint32(0); i < outputLength; i++ {
+			sum := float32(0)
+			for ic := uint32(0); ic < inputChannels; ic++ {
+				for k := uint32(0); k < kernelLength; k++ {
+					paddedIndex := ic*paddedInputLength + i*stride + k
+					kernelIndex := oc*(inputChannels*kernelLength) + ic*kernelLength + k
+					sum += paddedInput[paddedIndex] * b.Data[kernelIndex]
+				}
+			}
+			output.Data[oc*outputLength+i] = sum
+		}
+	}
+
+	return output
+}
+
+func Conv1D(ctx *Context, a, b *Tensor, stride, padding uint32) *Tensor {
+	return Conv1DImpl(ctx, a, b, stride, padding, false)
 }
 
 // Repeat
@@ -1226,6 +1280,34 @@ func BuildBackward(ctx *Context, gf *Graph, keep bool) Graph {
 	return result
 }
 
+func FlipKernel(ctx *Context, kernel *Tensor) *Tensor {
+	flippedKernel := DupTensor(ctx, kernel)        // Duplicate kernel tensor
+	for oc := uint32(0); oc < kernel.NE[0]; oc++ { // For each output channel
+		for ic := uint32(0); ic < kernel.NE[1]; ic++ { // For each input channel
+			for k := uint32(0); k < kernel.NE[2]; k++ { // For each element in the kernel
+				flippedKernel.Data[oc*kernel.NE[1]*kernel.NE[2]+ic*kernel.NE[2]+k] =
+					kernel.Data[oc*kernel.NE[1]*kernel.NE[2]+ic*kernel.NE[2]+(kernel.NE[2]-1-k)]
+			}
+		}
+	}
+	return flippedKernel
+}
+
+func FullConv1D(ctx *Context, input, kernel *Tensor, stride, padding uint32) *Tensor {
+	// For a full convolution, calculate padding to apply to the input tensor.
+	// The padding should be such that the kernel can slide across every element of the input, including the very first and last elements.
+	// This usually means padding = kernelSize - 1, but check your framework's convolution definitions.
+	// Ensure the padding is applied symmetrically if your framework requires manual padding.
+
+	// Assuming a Conv1D function exists that takes padding as an argument,
+	// and assuming kernel size can be inferred from the kernel tensor.
+	kernelSize := kernel.NE[1] // Assuming the kernel's size is in the second dimension.
+	padding = kernelSize - 1
+
+	// Call the existing Conv1D function with calculated padding for a full convolution
+	return Conv1D(ctx, input, kernel, stride, padding)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 func ComputeBackward(ctx *Context, tensor *Tensor, inplace bool) {
@@ -1398,7 +1480,21 @@ func ComputeBackward(ctx *Context, tensor *Tensor, inplace bool) {
 	case OP_ROPE:
 		//// ASSERT(false); // TODO: not implemented
 	case OP_CONV_1D_1S:
-		//// ASSERT(false); // TODO: not implemented
+		if src0.grad != nil {
+			// Compute gradient with respect to the input (src0)
+			// This involves 'full' convolution of the output gradient with the flipped kernel
+			flippedKernel := FlipKernel(ctx, src1)
+			inputGrad := FullConv1D(ctx, tensor.grad, flippedKernel, 1, 0) // stride 1, padding 0
+			src0.grad = AddImpl(ctx, src0.grad, inputGrad, inplace)
+		}
+
+		if src1.grad != nil {
+			// Compute gradient with respect to the kernel (src1)
+			// This requires 'valid' convolution of the transposed input with the output gradient
+			transposedInput := Transpose(ctx, src0)
+			kernelGrad := Conv1D(ctx, transposedInput, tensor.grad, 1, 0) // stride 1, padding 0
+			src1.grad = AddImpl(ctx, src1.grad, kernelGrad, inplace)
+		}
 	case OP_CONV_1D_2S:
 		//// ASSERT(false); // TODO: not implemented
 	case OP_FLASH_ATTN:
@@ -1604,8 +1700,6 @@ func GraphCompute(ctx *Context, graph *Graph) {
 
 }
 
-
-
 // =======================================================================
 
 func ComputeForward(graph *Graph, params *ComputeParams, tensor *Tensor) {
@@ -1730,8 +1824,7 @@ func ComputeForward(graph *Graph, params *ComputeParams, tensor *Tensor) {
 		ComputeForwardRopeFP32(params, tensor.Src0, tensor.Src1, tensor)
 	case OP_CONV_1D_1S:
 		////ggml_compute_forward_conv_1d_1s(params, tensor->src0, tensor->src1, tensor);
-		fmt.Printf("\n[HALT] Please implement : ggml_compute_forward_conv_1d_1s")
-		os.Exit(1)
+		ComputeForwardConv1D1SFP32(params, tensor.Src0, tensor.Src1, tensor)
 	case OP_CONV_1D_2S:
 		////ggml_compute_forward_conv_1d_2s(params, tensor->src0, tensor->src1, tensor);
 		fmt.Printf("\n[HALT] Please implement : ggml_compute_forward_conv_1d_2s")
@@ -1938,23 +2031,23 @@ func VecReluFP32(n uint32, y, x []float32) {
 
 func ComputeForwardReluFP32(params *ComputeParams, src0, dst *Tensor) {
 	// assert(params->ith == 0);
-    // assert(ggml_are_same_shape(src0, dst));
+	// assert(ggml_are_same_shape(src0, dst));
 	if !AreSameShape(src0, dst) {
 		fmt.Printf("\n[HALT] ComputeForwardReluFP32 : different shapes!")
 		os.Exit(1)
 	}
 
 	if params.Type == TASK_INIT || params.Type == TASK_FINALIZE {
-		return 
+		return
 	}
 
 	n := src0.Nrows()
 	nc := src0.NE[0]
 
 	// assert(dst->nb[0]  == sizeof(float));
-    // assert(src0->nb[0] == sizeof(float));
+	// assert(src0->nb[0] == sizeof(float));
 
-	for i := uint32(0); i < n; i++{
+	for i := uint32(0); i < n; i++ {
 		// ggml_vec_relu_f32(nc,
 		// 	(float *) ((char *) dst->data  + i*( dst->nb[1])),
 		// 	(float *) ((char *) src0->data + i*(src0->nb[1])));
@@ -2750,6 +2843,123 @@ func ComputeForwardSiluFP32(params *ComputeParams, src0, dst *Tensor) {
 	}
 }
 
+func ComputeForwardConv1D1SFP32(params *ComputeParams, src0, src1, dst *Tensor) {
+
+	////GGML_ASSERT(params->ith == 0);
+	////GGML_ASSERT(ggml_is_contiguous(src0));
+	////GGML_ASSERT(ggml_is_contiguous(src1));
+	////GGML_ASSERT(ggml_is_contiguous(dst));
+
+	if !src0.IsContiguous() {
+		fmt.Printf("[HALT] ComputeForwardConv1D1SFP32 : [src0] is NOT contiguous!")
+		os.Exit(1)
+	}
+
+	if !src1.IsContiguous() {
+		fmt.Printf("[HALT] ComputeForwardConv1D1SFP32 : [src1] is NOT contiguous!")
+		os.Exit(1)
+	}
+
+	if !dst.IsContiguous() {
+		fmt.Printf("[HALT] ComputeForwardConv1D1SFP32 : [dst] is NOT contiguous!")
+		os.Exit(1)
+	}
+
+	if params.Type == TASK_FINALIZE {
+		// noop
+		return
+	}
+
+	ne00 := src0.NE[0]
+	ne01 := src0.NE[1]
+	ne02 := src0.NE[2]
+
+	ne10 := src1.NE[0]
+	ne11 := src1.NE[1]
+
+	nb00 := src0.NB[0]
+	nb01 := src0.NB[1]
+	nb02 := src0.NB[2]
+
+	nb10 := src1.NB[0]
+	nb11 := src1.NB[1]
+
+	nb1 := dst.NB[1]
+
+	ith := params.ith
+	nth := params.nth
+
+	nk := ne00
+	nh := nk / 2
+
+	ew0 := up32(ne01)
+
+	// assert non even kernel size
+	if nk%2 == 0 {
+		fmt.Printf("[HALT] Compute Forward Conv1D1SFP32 : kernel size is even")
+		os.Exit(1)
+	}
+
+	// assert nb00 == sizeof(float) || nb10 == sizeof(float)
+	if nb00 != TYPE_SIZE[TYPE_F32] && nb10 != TYPE_SIZE[TYPE_F32] {
+		fmt.Printf("[HALT] Compute Forward Conv1D1SFP32 : src0 is not float32")
+		os.Exit(1)
+	}
+
+	switch params.Type {
+	case TASK_INIT:
+		// prepare kernel data (src0)
+		{
+			for i02 := uint32(0); i02 < ne02; i02++ {
+				for i01 := uint32(0); i01 < ne01; i01++ {
+					src := src0.Data[i02*nb02/4+i01*nb01/4:]
+					dstData := params.tensor.Data[i02*ew0*ne00/4:]
+					for i00 := uint32(0); i00 < ne00; i00++ {
+						dstData[i00*ew0+i01] = src[i00]
+					}
+				}
+			}
+		}
+
+		// prepare source data (src1)
+		{
+			for i11 := uint32(0); i11 < ne11; i11++ {
+				src := src1.Data[i11*nb11/4:]
+				dstData := params.tensor.Data[ne02*ew0*ne00/4+i11*ew0/4:]
+				for i10 := uint32(0); i10 < ne10; i10++ {
+					dstData[(i10+nh)*ew0+i11] = src[i10]
+				}
+			}
+		}
+		return
+	case TASK_FINALIZE:
+		return
+	}
+
+	// total rows in dst
+	nr := ne02
+
+	// rows per thread
+	dr := (nr + nth - 1) / nth
+
+	// row range for this thread
+	ir0 := dr * ith
+	ir1 := min32(ir0+dr, nr)
+
+	for i1 := uint32(ir0); i1 < ir1; i1++ {
+		dstData := dst.Data[i1*nb1/4:]
+		for i0 := uint32(0); i0 < ne10; i0++ {
+			dstData[i0] = 0.0
+			for k := -int(nth); k <= int(nth); k++ {
+				v := VecDotFP32(ew0,
+					src1.Data[i1*ew0*ne00+uint32(int(nth)+k)*ew0/4:],
+					src1.Data[ne02*ew0*ne00+uint32(int(i0)+int(nth)+k)*ew0/4:])
+				dstData[i0] += v
+			}
+		}
+	}
+}
+
 // ---
 
 type TokenScore struct {
@@ -2978,7 +3188,6 @@ func Init(params InitParams) {
 	////const uint64_t t_end = ggml_time_us(); UNUSED(t_end);
 
 }
-
 
 func PrintTensor(tensor *Tensor, name string) {
 	var dt string

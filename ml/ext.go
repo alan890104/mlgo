@@ -16,10 +16,10 @@ const (
 )
 
 type Module interface {
-	GeMM(ctx *Context, input_size uint32, output_size uint32) Layer
+	GeMM(ctx *Context, inputSize uint32, outputSize uint32) Layer
 	Relu(ctx *Context) Layer
-	Conv1D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer
-	Conv2D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer
+	Conv1D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
+	Conv2D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
 }
 
 type ModuleImpl struct {
@@ -33,6 +33,12 @@ func NewModuleImpl(fp *os.File) Module {
 		log.Fatal("invalid model file (bad magic)")
 	}
 	return &ModuleImpl{fp: fp}
+}
+
+func WrapLayer(ctx *Context) Layer {
+	return func(input *Tensor) *Tensor {
+		return input
+	}
 }
 
 func (f *ModuleImpl) Relu(ctx *Context) Layer {
