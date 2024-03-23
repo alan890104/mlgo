@@ -16,10 +16,10 @@ const (
 )
 
 type ModelLoader interface {
-	LoadGeMM(ctx *Context, input_size int32, output_size int32) Layer
+	LoadGeMM(ctx *Context, input_size uint32, output_size uint32) Layer
 	LoadActivation(ctx *Context, act ACT) Layer
-	LoadConv1D(ctx *Context, input_size int32, output_size int32, kernel_size int32, stride int32, padding int32) Layer
-	LoadConv2D(ctx *Context, input_size int32, output_size int32, kernel_size int32, stride int32, padding int32) Layer
+	LoadConv1D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer
+	LoadConv2D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer
 }
 
 type FileModelLoaderImpl struct {
@@ -47,23 +47,23 @@ func (f *FileModelLoaderImpl) LoadActivation(ctx *Context, act ACT) Layer {
 }
 
 // LoadConv1D implements ModelLoader.
-func (f *FileModelLoaderImpl) LoadConv1D(ctx *Context, input_size int32, output_size int32, kernel_size int32, stride int32, padding int32) Layer {
+func (f *FileModelLoaderImpl) LoadConv1D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer {
 	panic("unimplemented")
 }
 
 // LoadConv2D implements ModelLoader.
-func (f *FileModelLoaderImpl) LoadConv2D(ctx *Context, input_size int32, output_size int32, kernel_size int32, stride int32, padding int32) Layer {
+func (f *FileModelLoaderImpl) LoadConv2D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer {
 	panic("unimplemented")
 }
 
 // LoadGeMM implements ModelLoader.
-func (f *FileModelLoaderImpl) LoadGeMM(ctx *Context, input_size int32, output_size int32) Layer {
-	w := NewTensor2D(nil, TYPE_F32, uint32(784), uint32(20))
+func (f *FileModelLoaderImpl) LoadGeMM(ctx *Context, input_size uint32, output_size uint32) Layer {
+	w := NewTensor2D(nil, TYPE_F32, input_size, output_size)
 	for i := 0; i < len(w.Data); i++ {
 		w.Data[i] = readFP32(f.fp)
 	}
 
-	b := NewTensor1D(nil, TYPE_F32, uint32(20))
+	b := NewTensor1D(nil, TYPE_F32, output_size)
 	for i := 0; i < len(b.Data); i++ {
 		b.Data[i] = readFP32(f.fp)
 	}
