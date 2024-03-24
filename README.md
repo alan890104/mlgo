@@ -21,6 +21,7 @@ See `examples/linear_model/`
 4. Run `code_generator.py` to generate `/dist/simple_model.go`
 
    ```bash
+   mkdir dist
    python3 ./scripts/code_generator.py
    ```
 6. Run following command to check this model work
