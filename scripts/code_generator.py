@@ -5,7 +5,7 @@ template_dir = "."
 
 env = Environment(loader=FileSystemLoader(template_dir))
 
-template = env.get_template("model_temp.py.j2")
+template = env.get_template("./scripts/model_temp.py.j2")
 
 from model_graph import Graph
 import onnx
