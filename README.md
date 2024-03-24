@@ -27,6 +27,5 @@ See `examples/linear_model/`
 6. Run following command to check this model work
 
    ```bash
-   cd dist
-   go run simple_model.go
+   go run ./dist/simple_model.go
    ```
