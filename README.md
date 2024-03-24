@@ -14,12 +14,18 @@ See `examples/linear_model/`
 
 1. Export the AI model into ONNX
 2. Use `./scripts/convert_onnx_to_ggml.py` to convert ONNX to ggml
-3. Run `code_generator.py` to generate `/dist/simple_model.go` 
-4. Run following command to check this model work
+   
+   ```bash
+   python3 ./scripts/convert_onnx_to_ggml.py ./examples/linear_model/onnx/simple_model.onnx ./examples/linear_model/ggml/simple_model.bin
+   ```
+4. Run `code_generator.py` to generate `/dist/simple_model.go`
 
+   ```bash
+   python3 ./scripts/code_generator.py
+   ```
+6. Run following command to check this model work
 
-```bash
-cd dist
-go run simple_model.go
-
-```
+   ```bash
+   cd dist
+   go run simple_model.go
+   ```
