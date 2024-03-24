@@ -9,15 +9,17 @@ The machine learning part of this project refers to the legendary [ggml.cpp](htt
 
 `pip install -r requirements.txt`
 
-## MNIST
+## Linear Model
+See `examples/linear_model/`
 
-1. Train the AI model. See `examples/mnist/trainning/mnist.ipynb`
-2. Convert the AI model into GGML using `examples/mnist/convert-h5-to-ggml.py`
-3. Build the AI inference engine for MIPS
-`cd examples/mnist_mips && ./build`
-``
+1. Export the AI model into ONNX
+2. Use `./scripts/convert_onnx_to_ggml.py` to convert ONNX to ggml
+3. Run `code_generator.py` to generate `/dist/simple_model.go` 
+4. Run following command to check this model work
 
-## LLAMA
 
-Support LLaMA 1 and LLaMA 2 (7B and 13B).
-Please refer to `examples/llama/README.md` and download the model first.
+```bash
+cd dist
+go run simple_model.go
+
+```
