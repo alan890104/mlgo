@@ -5,7 +5,7 @@ template_dir = "."
 
 env = Environment(loader=FileSystemLoader(template_dir))
 
-template = env.get_template("simple_model_temp.py.j2")
+template = env.get_template("model_temp.py.j2")
 
 from model_graph import Graph
 import onnx
@@ -26,7 +26,7 @@ def generate_eval_func(file, model_graph: Graph):
             input[0].type.tensor_type.shape.dim[i].dim_value
             for i in range(1, n_input + 1)
         ],
-        "model_weights_fname": "../examples/linear_model/ggml/simple_model.bin",
+        "model_weights_fname": "./examples/linear_model/ggml/simple_model.bin",
     }
 
     rendered_code = template.render(context)
@@ -38,11 +38,11 @@ def generate_eval_func(file, model_graph: Graph):
 def main():
     # load onnx model
     model_name = "simple_model"
-    model_onnx = onnx.load(f"../examples/linear_model/onnx/{model_name}.onnx")
+    model_onnx = onnx.load(f"./examples/linear_model/onnx/{model_name}.onnx")
     model_onnx_with_shape = onnx.shape_inference.infer_shapes(model_onnx)
 
     graph = Graph(model_onnx_with_shape.graph)
-    fout = f"../dist/{model_name}.go"
+    fout = f"./dist/{model_name}.go"
     generate_eval_func(fout, graph)
 
 
