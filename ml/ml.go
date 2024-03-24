@@ -118,6 +118,10 @@ const (
 	OP_FLASH_FF
 
 	OP_COUNT
+
+	// new operations
+	OP_IM2COL
+	OP_CONV_TRANSPOSE_2D
 )
 
 // n-dimensional tensor
@@ -868,6 +872,11 @@ func NewTensor4D(ctx *Context, dt DType, ne0, ne1, ne2, ne3 uint32) *Tensor {
 	return NewTensor(ctx, dt, 4, ne0, ne1, ne2, ne3, nil)
 }
 
+// ggml_add_or_set
+func AddOrSet(ctx *Context, a, b *Tensor) {
+
+}
+
 // ggml_new_tensor_impl
 func NewTensor(ctx *Context, dt DType, dims uint32, ne0, ne1, ne2, ne3 uint32, data []float32) *Tensor {
 
@@ -1004,6 +1013,24 @@ func Rope(ctx *Context, a *Tensor, past, dims, mode uint32) *Tensor {
 	return result
 }
 
+// ggml_reshape_2d
+func Reshape2D(ctx *Context, a *Tensor, ne0, ne1 uint32) *Tensor {
+	Must(a.IsContiguous(), "Reshape2D : tensor is NOT contiguous!")
+	Must(a.Nelements() == ne0*ne1, "Reshape2D : different elements number!")
+
+	isNode := a.grad != nil
+
+	result := NewTensor(ctx, a.Type, 2, ne0, ne1, 1, 1, a.Data)
+	result.op = OP_RESHAPE
+	if isNode {
+		result.grad = DupTensor(ctx, result)
+	} else {
+		result.grad = nil
+	}
+	result.Src0 = a
+	return result
+}
+
 func Reshape3D(ctx *Context, a *Tensor, ne0, ne1, ne2 uint32) *Tensor {
 	////ASSERT(ggml_is_contiguous(a));
 	////ASSERT(ggml_nelements(a) == ne0*ne1*ne2);
@@ -1034,6 +1061,22 @@ func Reshape3D(ctx *Context, a *Tensor, ne0, ne1, ne2 uint32) *Tensor {
 	result.Src0 = a
 	result.Src1 = nil
 
+	return result
+}
+
+func Reshape4D(ctx *Context, a *Tensor, ne0, ne1, ne2, ne3 uint32) *Tensor {
+	Must(a.IsContiguous(), "Reshape4D : tensor is NOT contiguous!")
+	Must(a.Nelements() == ne0*ne1*ne2*ne3, "Reshape4D : different elements number!")
+	isNode := a.grad != nil
+
+	result := NewTensor(ctx, a.Type, 4, ne0, ne1, ne2, ne3, a.Data)
+	result.op = OP_RESHAPE
+	if isNode {
+		result.grad = DupTensor(ctx, result)
+	} else {
+		result.grad = nil
+	}
+	result.Src0 = a
 	return result
 }
 
@@ -1280,33 +1323,115 @@ func BuildBackward(ctx *Context, gf *Graph, keep bool) Graph {
 	return result
 }
 
-func FlipKernel(ctx *Context, kernel *Tensor) *Tensor {
-	flippedKernel := DupTensor(ctx, kernel)        // Duplicate kernel tensor
-	for oc := uint32(0); oc < kernel.NE[0]; oc++ { // For each output channel
-		for ic := uint32(0); ic < kernel.NE[1]; ic++ { // For each input channel
-			for k := uint32(0); k < kernel.NE[2]; k++ { // For each element in the kernel
-				flippedKernel.Data[oc*kernel.NE[1]*kernel.NE[2]+ic*kernel.NE[2]+k] =
-					kernel.Data[oc*kernel.NE[1]*kernel.NE[2]+ic*kernel.NE[2]+(kernel.NE[2]-1-k)]
-			}
-		}
+// must statement
+func Must(statement bool, message string) {
+	if !statement {
+		fmt.Printf("\n[STOP] %s", message)
+		os.Exit(1)
 	}
-	return flippedKernel
 }
 
-func FullConv1D(ctx *Context, input, kernel *Tensor, stride, padding uint32) *Tensor {
-	// For a full convolution, calculate padding to apply to the input tensor.
-	// The padding should be such that the kernel can slide across every element of the input, including the very first and last elements.
-	// This usually means padding = kernelSize - 1, but check your framework's convolution definitions.
-	// Ensure the padding is applied symmetrically if your framework requires manual padding.
-
-	// Assuming a Conv1D function exists that takes padding as an argument,
-	// and assuming kernel size can be inferred from the kernel tensor.
-	kernelSize := kernel.NE[1] // Assuming the kernel's size is in the second dimension.
-	padding = kernelSize - 1
-
-	// Call the existing Conv1D function with calculated padding for a full convolution
-	return Conv1D(ctx, input, kernel, stride, padding)
+// ggml_calc_conv_output_size
+func CalcConvOutputSize(ctx *Context, inputSize uint32, kernelSize uint32, stride uint32, padding uint32, dilation uint32) uint32 {
+	return (inputSize+2*padding-dilation*(kernelSize-1)-1)/stride + 1
 }
+
+// ggml_im2col
+func Im2Col(ctx *Context, a, b *Tensor, s0, s1, p0, p1, d0, d1 uint32, is2D bool) *Tensor {
+	if is2D {
+		Must(a.NE[2] == b.NE[2], "Im2Col : a.NE[2] == b.NE[2]")
+	} else {
+		Must(a.NE[1] == b.NE[1], "Im2Col : a.NE[1] == b.NE[1]")
+	}
+	var (
+		isNode bool   = a.grad != nil || b.grad != nil
+		OW     uint32 = CalcConvOutputSize(ctx, b.NE[0], a.NE[0], s0, p0, d0)
+		OH     uint32
+	)
+	if is2D {
+		OH = CalcConvOutputSize(ctx, b.NE[1], a.NE[1], s1, p1, d1)
+	}
+
+	var ne [4]uint32
+	ne[1] = OW
+	if is2D {
+		ne[0] = a.NE[2] * a.NE[1] * a.NE[0]
+		ne[2] = OH
+		ne[3] = b.NE[3]
+	} else {
+		ne[0] = a.NE[1] * a.NE[0]
+		ne[2] = b.NE[2]
+		ne[3] = 1
+	}
+
+	// int32_t params[] = { s0, s1, p0, p1, d0, d1, (is_2D ? 1 : 0) };
+	data := []float32{float32(s0), float32(s1), float32(p0), float32(p1), float32(d0), float32(d1), float32(0)}
+	if is2D {
+		data[6] = 1
+	}
+	result := NewTensor(ctx, a.Type, 4, ne[0], ne[1], ne[2], ne[3], data)
+
+	result.op = OP_IM2COL
+	result.Src0 = a
+	result.Src1 = b
+	if isNode {
+		result.grad = DupTensor(ctx, result)
+	} else {
+		result.grad = nil
+	}
+	return result
+}
+
+// ggml_conv2d
+func Conv2D(ctx *Context, a, b *Tensor, s0, s1, p0, p1, d0, d1 uint32) *Tensor {
+	im2Col := Im2Col(ctx, a, b, s0, s1, p0, p1, d0, d1, true)
+	result := MulMat(ctx,
+		Reshape2D(ctx, im2Col, im2Col.NE[0], im2Col.NE[3]*im2Col.NE[2]*im2Col.NE[1]), // [N, OH, OW, IC * KH * KW] => [N*OH*OW, IC * KH * KW]
+		Reshape2D(ctx, a, a.NE[0]*a.NE[1]*a.NE[2], a.NE[3]))                          // [OC，IC, KH, KW] => [OC, IC * KH * KW]
+
+	result = Reshape4D(ctx, result, im2Col.NE[1], im2Col.NE[2], a.NE[3], im2Col.NE[3]) // [N, OC, OH, OW]
+	return result
+}
+
+// ggml_calc_conv_transpose_output_size
+func CalcConvTransposeOutputSize(ctx *Context, inputSize uint32, kernelSize uint32, stride uint32, padding uint32) uint32 {
+	return (inputSize-1)*stride - 2*padding + kernelSize
+}
+
+// ggml_conv_transpose_2d_p0
+func ConvTranspose2DP0(ctx *Context, a, b *Tensor, stride uint32) *Tensor {
+	Must(a.NE[3] == b.NE[2], "ConvTranspose2DP0 : a.NE[3] == b.NE[2]")
+	var isNode bool
+	if a.grad != nil || b.grad != nil {
+		// TODO: implement backward
+		isNode = true
+	}
+	ne := [4]uint32{
+		CalcConvTransposeOutputSize(ctx, b.NE[0], a.NE[0], stride, 0),
+		CalcConvTransposeOutputSize(ctx, b.NE[1], a.NE[1], stride, 0),
+		a.NE[2],
+		b.NE[3],
+	}
+
+	data := []float32{float32(stride)}
+	result := NewTensor(ctx, TYPE_F32, 4, ne[0], ne[1], ne[2], ne[3], data)
+	result.op = OP_CONV_TRANSPOSE_2D
+	if isNode {
+		result.grad = DupTensor(ctx, result)
+	} else {
+		result.grad = nil
+	}
+	result.Src0 = a
+	result.Src1 = b
+	return result
+}
+
+// ggml_calc_pool_output_size
+func CalcPoolOutputSize(ctx *Context, inputSize uint32, kernelSize uint32, stride uint32, padding uint32) uint32 {
+	return (inputSize+2*padding-kernelSize)/stride + 1
+}
+
+// ggml_pool_2d
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -1480,21 +1605,21 @@ func ComputeBackward(ctx *Context, tensor *Tensor, inplace bool) {
 	case OP_ROPE:
 		//// ASSERT(false); // TODO: not implemented
 	case OP_CONV_1D_1S:
-		if src0.grad != nil {
-			// Compute gradient with respect to the input (src0)
-			// This involves 'full' convolution of the output gradient with the flipped kernel
-			flippedKernel := FlipKernel(ctx, src1)
-			inputGrad := FullConv1D(ctx, tensor.grad, flippedKernel, 1, 0) // stride 1, padding 0
-			src0.grad = AddImpl(ctx, src0.grad, inputGrad, inplace)
-		}
+		// if src0.grad != nil {
+		// 	// Compute gradient with respect to the input (src0)
+		// 	// This involves 'full' convolution of the output gradient with the flipped kernel
+		// 	flippedKernel := FlipKernel(ctx, src1)
+		// 	inputGrad := FullConv1D(ctx, tensor.grad, flippedKernel, 1, 0) // stride 1, padding 0
+		// 	src0.grad = AddImpl(ctx, src0.grad, inputGrad, inplace)
+		// }
 
-		if src1.grad != nil {
-			// Compute gradient with respect to the kernel (src1)
-			// This requires 'valid' convolution of the transposed input with the output gradient
-			transposedInput := Transpose(ctx, src0)
-			kernelGrad := Conv1D(ctx, transposedInput, tensor.grad, 1, 0) // stride 1, padding 0
-			src1.grad = AddImpl(ctx, src1.grad, kernelGrad, inplace)
-		}
+		// if src1.grad != nil {
+		// 	// Compute gradient with respect to the kernel (src1)
+		// 	// This requires 'valid' convolution of the transposed input with the output gradient
+		// 	transposedInput := Transpose(ctx, src0)
+		// 	kernelGrad := Conv1D(ctx, transposedInput, tensor.grad, 1, 0) // stride 1, padding 0
+		// 	src1.grad = AddImpl(ctx, src1.grad, kernelGrad, inplace)
+		// }
 	case OP_CONV_1D_2S:
 		//// ASSERT(false); // TODO: not implemented
 	case OP_FLASH_ATTN:
@@ -1846,6 +1971,45 @@ func ComputeForward(graph *Graph, params *ComputeParams, tensor *Tensor) {
 		////ASSERT(false);
 		fmt.Printf("\n[HALT] ComputeForward got OP_COUNT method!")
 		os.Exit(1)
+	case OP_IM2COL:
+		////ggml_compute_forward_im2col(params, tensor->src0, tensor->src1, tensor);
+		fmt.Printf("\n[HALT] Please implement : ggml_compute_forward_im2col")
+		os.Exit(1)
+	case OP_CONV_TRANSPOSE_2D:
+		nk := tensor.NE[0] * tensor.NE[1] * tensor.NE[2] * tensor.NE[3]
+
+		if params.Type == TASK_FINALIZE {
+			return
+		}
+
+		if params.Type == TASK_INIT {
+			params.tensor.Data = make([]float32, nk)
+
+			// permute kernel data (src0) from (Kw x Kh x Cout x Cin) to (Cin x Kw x Kh x Cout)
+			for i03 := uint32(0); i03 < tensor.NE[3]; i03++ {
+				for i02 := uint32(0); i02 < tensor.NE[2]; i02++ {
+					src := tensor.Src0.Data[i03*tensor.NB[3]+i02*tensor.NB[2]:]
+					dstData := tensor.Data[i02*tensor.NE[0]*tensor.NE[1]*tensor.NE[3]:]
+					for i01 := uint32(0); i01 < tensor.NE[1]; i01++ {
+						for i00 := uint32(0); i00 < tensor.NE[0]; i00++ {
+							dstData[i01*tensor.NE[0]*tensor.NE[3]+i00*tensor.NE[3]+i03] = src[i01*tensor.NE[0]+i00]
+						}
+					}
+				}
+			}
+
+			// permute source data (src1) from (Sw x Sh x Cin) to (Cin x Sw x Sh)
+			for i12 := uint32(0); i12 < tensor.NE[2]; i12++ {
+				for i11 := uint32(0); i11 < tensor.NE[1]; i11++ {
+					src := tensor.Src1.Data[i12*tensor.NB[2]+i11*tensor.NB[1]:]
+					dstData := tensor.Data[i11*tensor.NE[0]*tensor.NE[2]:]
+					for i10 := uint32(0); i10 < tensor.NE[0]; i10++ {
+						dstData[i10*tensor.NE[2]+i12] = float32(src[i10])
+					}
+				}
+			}
+			return
+		}
 	}
 }
 

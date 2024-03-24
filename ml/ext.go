@@ -7,17 +7,10 @@ import (
 
 type Layer func(input *Tensor) *Tensor
 
-type ACT int
-
-const (
-	ACT_RELU = iota
-	ACT_SIGMOID
-	ACT_TANH
-)
-
 type Module interface {
 	Gemm(ctx *Context, inputSize uint32, outputSize uint32) Layer
 	Relu(ctx *Context) Layer
+	MaxPool1D(ctx *Context, kernelSize uint32, stride uint32, padding uint32) Layer
 	Conv1D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
 	Conv2D(ctx *Context, inputSize uint32, outputSize uint32, kernelSize uint32, stride uint32, padding uint32) Layer
 }
@@ -28,14 +21,14 @@ type ModuleImpl struct {
 
 func NewModuleImpl(fp *os.File) Module {
 	magic := readInt(fp)
-	// 0x6F7261 is mlgo in hex
+	// 0x6F7261 is ora in hex
 	if magic != 0x6F7261 {
 		log.Fatal("invalid model file (bad magic)")
 	}
 	return &ModuleImpl{fp: fp}
 }
 
-func WrapLayer(ctx *Context) Layer {
+func Passthrough(ctx *Context) Layer {
 	return func(input *Tensor) *Tensor {
 		return input
 	}
@@ -48,24 +41,19 @@ func (f *ModuleImpl) Relu(ctx *Context) Layer {
 }
 
 // Conv1D implements ModelLoader.
-func (f *ModuleImpl) Conv1D(ctx *Context, input_size uint32,  kernel_size uint32, stride uint32, padding uint32) Layer {
+func (f *ModuleImpl) Conv1D(ctx *Context, input_size uint32, kernel_size uint32, stride uint32, padding uint32, dilation uint32) Layer {
 	return func(input *Tensor) *Tensor {
-		w := NewTensor2D(nil, TYPE_F32, kernel_size, input_size)
-		for i := 0; i < len(w.Data); i++ {
-			w.Data[i] = readFP32(f.fp)
-		}
-
-		b := NewTensor1D(nil, TYPE_F32, input_size)
-		for i := 0; i < len(b.Data); i++ {
-			b.Data[i] = readFP32(f.fp)
-		}
-
-		return Add(ctx, Conv1D(ctx, input, w, b, stride, padding), b)
+		return nil
 	}
 }
 
 // Conv2D implements ModelLoader.
 func (f *ModuleImpl) Conv2D(ctx *Context, input_size uint32, output_size uint32, kernel_size uint32, stride uint32, padding uint32) Layer {
+	panic("unimplemented")
+}
+
+// MaxPool1D implements Module.
+func (f *ModuleImpl) MaxPool1D(ctx *Context, kernelSize uint32, stride uint32, padding uint32) Layer {
 	panic("unimplemented")
 }
 
